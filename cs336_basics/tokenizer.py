@@ -136,6 +136,11 @@ class Tokenizer:
         Returns:
             Iterator[int]: an iterator of token ids.
         """
+        # 注意from的使用: 如果有多个text，一个text返回多个token时,
+        # e.g. [text1: [token1, token2, token3], text2:[token4, token5], ...]
+        # 期望迭代器迭代完全结果[token1, token2, token3, token4, token5, ...]
+        # yield self.encode(text)将返回一个text的完整结果，迭代完全结果[[token1, token2, token3], [token4, token5], ...]
+        # yield from self.encode(text)返回[token1, token2, token3, token4, token5, ...]
         for text in iterable:
             yield from self.encode(text)
     
