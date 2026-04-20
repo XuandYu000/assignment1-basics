@@ -3,11 +3,7 @@ import regex as re
 from collections import defaultdict
 from multiprocessing import Pool
 from typing import BinaryIO
-
-MAX_BYTE_NUM = 256
-ENCODE_TYPE = "utf-8"
-PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-SPLIT_SPECIAL_TOKEN = "<|endoftext|>".encode(ENCODE_TYPE)
+from .utils import MAX_BYTE_NUM, ENCODE_TYPE, PAT, SPLIT_SPECIAL_TOKEN
 
 def init_vocab(special_tokens: list[str]):
     vocab = dict[int, bytes]()
@@ -67,6 +63,7 @@ def find_chunk_boundaries(
 
 def pre_tokenization(args: tuple[str, int, int, list[str]]):
     """Given a chunk(defined by inpu_path, start, end), pre-token this chunk
+    For example, "low" -> [b'l', b'o', b'w']
     Args:
         args (tuple[str, int, int, list[str]]):
             input_path: the file path
@@ -75,7 +72,7 @@ def pre_tokenization(args: tuple[str, int, int, list[str]]):
     
     Returns:
         list[list[bytes]]:
-            pre-tokens. Each list item is a list of bytes. For example, "low" -> [b'l', b'o', b'w']
+            pre-tokens. Each list item is a list of bytes.
     """
     input_path, start, end, special_tokens = args
 
