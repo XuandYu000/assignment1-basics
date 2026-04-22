@@ -2,6 +2,40 @@ import torch
 import math
 from einops import einsum
 import torch.nn as nn
+import torch.nn.functional as F
+
+class RMSNorm(nn.Module):
+    """RMSNorm layer which is compute-efficient simplified variant of LayerNorm."""
+    def __init__(self, 
+        d_model: int,
+        eps: float = 1e-5,
+        device: torch.device|None = None,
+        dtype: torch.dtype|None = None,
+    ) -> None:
+        """
+        Args:
+            d_mode (int): Hidden dimension of the model
+            eps (float): Epsilon value for numerical stability
+            device (torch.device | None): Device to store the parameters on
+            detype (torch.device | None): Data type of the parameters
+        """
+        factory_kwargs = {"device": device, "dtype": dtype}
+        super().__init__()
+        self.scale = d_model ** 0.5
+        self.g = nn.Parameter(torch.ones(d_model))
+    
+    def forward(self,
+        x: torch.Tensor
+    ) -> torch.Tensor:
+        """Process an input tensor of shape (batch_size, squence_length, d_model) and return a tensor of the same shape."""
+        in_dtype = x.dtype
+        x = x.to(torch.float32)
+
+        # RMSNorm(a_i) = \frac{a_i}{RMS(a)} * g_i
+        # RMS(a) = \sqrt{\frac{1}{d_model} \sum_{i=1}^{d_model} a_i^2 + \epsilon}
+        # equals to: RMSNorm(a) = F.normalize(a, dim=-1) * g * \sqrt{d_model}
+        result = F.normalize(x, dim=-1) * self.g * self.scale # F.normalize默认dim=1，序列维
+        return result.to(in_dtype)
 
 class Embedding(nn.Module):
     """Implement the Embedding class that inherits from torch.nn.Module and performs an
@@ -17,7 +51,7 @@ class Embedding(nn.Module):
         Args:
             num_embeddings (int): size of the vocabulary
             embedding_dim (int): Dimension of the embedding vectors
-            evice (torch.device | None): Device to store the parameters on
+            device (torch.device | None): Device to store the parameters on
             detype (torch.device | None): Data type of the parameters
         """
         factory_kwargs = {"device": device, "dtype": dtype}
