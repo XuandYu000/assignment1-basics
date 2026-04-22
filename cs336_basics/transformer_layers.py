@@ -114,3 +114,28 @@ class Linear(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return einsum(self.weight, x, "d_out d_in, ... d_in -> ... d_out")
+
+class SwiGLU(nn.Module):
+    """ Implement the SwiGLU feed-forward network, 
+    composed of a SiLU activation function and a GLU.
+    SiLU(x) = x \sigma{x} = \frac{x}{1+e^{-x}}
+    GLU(x, W_1, W_2) = \sigma{W_1 x} \odot (W_2 x)
+    FFN(x) = SwiGLU(x, W_1, W_2, W_3) = W_2(SiLU(W_1 x) \odot (W_3 x)), where x \in R^{d_model}, W_1, W_3 \in R^{d_ff x d_model}, W_2 \in R^{d_model x d_ff}, d_ff = \frac{8}{3}d_model nearby 64
+    """
+    def __init__(self, 
+        d_model: int,
+        d_ff: int,
+        device: torch.device|None = None,
+        dtype: torch.dtype|None = None,
+    ) -> None:
+        factory_kwargs = {"device": device, "dtype": dtype}
+        super().__init__()
+        self.w1 = Linear(d_ff, d_model)
+        self.w2 = Linear(d_model, d_ff)
+        self.w3 = Linear(d_ff, d_model)
+        
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        w1_output = self.w1(x)
+        silu_output = torch.sigmoid(w1_output) * w1_output
+        return self.w2(silu_output * self.w3(x))
