@@ -185,3 +185,53 @@ class SwiGLU(nn.Module):
         w1_output = self.w1(x)
         silu_output = torch.sigmoid(w1_output) * w1_output
         return self.w2(silu_output * self.w3(x))
+
+def softmax(x: torch.tensor, dim: int) -> torch.Tensor:
+    """
+    Given a tensor of inputs, return the output of softmaxing the given `dim`
+    of the input.
+
+    Args:
+        in_features (Float[Tensor, "..."]): Input features to softmax. Shape is arbitrary.
+        dim (int): Dimension of the `in_features` to apply softmax to.
+
+    Returns:
+        Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
+        softmax normalizing the specified `dim`.
+    """
+    # Trick for numerical stability
+    x -= x.max(dim=dim, keepdim=True).values
+
+    x_exp = x.exp()
+    return x_exp / x_exp.sum(dim=dim, keepdim=True)
+
+def scaled_dot_product_attention(
+    Q: torch.Tensor,
+    K: torch.Tensor,
+    V: torch.Tensor,
+    mask: torch.Tensor|None = None,
+) -> torch.Tensor:
+    """
+    Given key (K), query (Q), and value (V) tensors, return
+    the output of your scaled dot product attention implementation.
+
+    Args:
+        Q (Float[Tensor, " ... queries d_k"]): Query tensor
+        K (Float[Tensor, " ... keys d_k"]): Key tensor
+        V (Float[Tensor, " ... keys d_v"]): Values tensor
+        mask (Bool[Tensor, " ... queries keys"] | None): Mask tensor
+    Returns:
+        Float[Tensor, " ... queries d_v"]: Output of SDPA
+    """
+    scale_factor = 1 / math.sqrt(Q.size(-1))
+    attn = einsum(Q, K, "... queries d_k, ... keys d_k -> ... queries keys") * scale_factor
+
+    attn_bias = torch.zeros(attn.shape, device=Q.device, dtype=Q.dtype)
+    if mask is not None:
+        attn_bias.masked_fill_(mask.logical_not(), float('-inf'))
+        
+    attn += attn_bias
+    attn = softmax(attn, dim=-1)
+
+    attn_output = einsum(attn, V, "... queries keys, ... keys d_v -> ... queries d_v")
+    return attn_output
