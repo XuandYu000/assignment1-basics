@@ -1,8 +1,54 @@
 import torch
 import math
-from einops import einsum
+from einops import einsum, rearrange
 import torch.nn as nn
 import torch.nn.functional as F
+
+class RotaryPositionalEmbedding(nn.Module):
+    """RoPE for a given input tensor. More explanation in the handout and https://github.com/XuandYu000/3D_RoPE_example"""
+    def __init__(self,
+        theta: float,
+        d_k: int,
+        max_seq_len: int,
+        device: torch.device|None = None,
+    ) -> None:
+        """
+        Args:
+            theta (float): \Theta value for the RoPE
+            d_k (int): dimension of query and key vectors
+            max_seq_len (int): Maximum sequence length that will be input
+            device (torch.device|None): Device to store the parameters on
+        """
+        super().__init__()
+        self.theta = theta
+        self.d_k = d_k
+        self.max_seq_len = max_seq_len
+        self.device = device
+
+        self.freqs_cis = self._precompute_freq_cis(d_k, max_seq_len, theta).to(torch.complex64)
+    
+    def _precompute_freq_cis(self, dim: int, end: int = 1024, theta: float = 10000.0) -> torch.Tensor:
+        '''precompute the freqs for the 1D rope R_m
+        input:
+            dim: the dimension of the rope
+            end: the max position
+            theta: the theta of the rope
+        output:
+            freqs_cis: the freqs of the rope, cos(m\theta) + sin(m\theta)*j
+        '''
+        # 1d rope precompute
+        freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)
+                    [: (dim // 2)].double() / dim)) #[\theta_0, \theta_1, \cdots, \theta_{d/2-1}], freqs shape: (dim/2)
+        freqs = torch.outer(torch.arange(end, device=freqs.device), freqs) # [0*freqs, 1*freqs, \cdots, (end-1)*freqs], shape: (end, dim/2)
+        freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64, cos(m\theta) + sin(m\theta)*j, shape: (end, dim/2)
+        return freqs_cis
+    
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
+        x_out = rearrange(x, "... sequence_length (d n) -> ... sequence_length d n", n=2)
+        x_out = torch.view_as_complex(x_out.to(torch.float64))
+        x_out = torch.view_as_real(x_out * self.freqs_cis).flatten(-2)
+        return x_out.to(self.device if self.device is not None else x.device)
+
 
 class RMSNorm(nn.Module):
     """RMSNorm layer which is compute-efficient simplified variant of LayerNorm."""
@@ -22,7 +68,7 @@ class RMSNorm(nn.Module):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.scale = d_model ** 0.5
-        self.g = nn.Parameter(torch.ones(d_model))
+        self.g = nn.Parameter(torch.ones(d_model, **factory_kwargs))
     
     def forward(self,
         x: torch.Tensor
@@ -130,9 +176,9 @@ class SwiGLU(nn.Module):
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
-        self.w1 = Linear(d_ff, d_model)
-        self.w2 = Linear(d_model, d_ff)
-        self.w3 = Linear(d_ff, d_model)
+        self.w1 = Linear(d_ff, d_model, **factory_kwargs)
+        self.w2 = Linear(d_model, d_ff, **factory_kwargs)
+        self.w3 = Linear(d_ff, d_model, **factory_kwargs)
         
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
