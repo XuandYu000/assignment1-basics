@@ -46,8 +46,8 @@ class RotaryPositionalEmbedding(nn.Module):
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
         x_out = rearrange(x, "... sequence_length (d n) -> ... sequence_length d n", n=2)
         x_out = torch.view_as_complex(x_out.to(torch.float64))
-        x_out = torch.view_as_real(x_out * self.freqs_cis).flatten(-2)
-        return x_out.to(self.device if self.device is not None else x.device)
+        x_out = torch.view_as_real(x_out * self.freqs_cis[token_positions]).flatten(-2)
+        return x_out.to(device=self.device if self.device is not None else x.device, dtype=x.dtype)
 
 
 class RMSNorm(nn.Module):
@@ -229,9 +229,65 @@ def scaled_dot_product_attention(
     attn_bias = torch.zeros(attn.shape, device=Q.device, dtype=Q.dtype)
     if mask is not None:
         attn_bias.masked_fill_(mask.logical_not(), float('-inf'))
-        
+
     attn += attn_bias
     attn = softmax(attn, dim=-1)
 
     attn_output = einsum(attn, V, "... queries keys, ... keys d_v -> ... queries d_v")
     return attn_output
+
+class Multihead_Self_Attention(nn.Module):
+    def __init__(self,
+        d_model: int,
+        num_heads: int,
+        theta: float|None = None,
+        max_seq_len: int|None = None,
+        device: torch.device|None = None,
+        dtype: torch.dtype|None = None
+    ) -> None:
+        """
+        Implement causal multi-head self-attention with causal masking.
+        Args:
+            d_model (int): Dimensionality of the Transformer block inputs
+            num_heads (int): Number of heads to use in multi-head self-attention
+            theta (float): \Theta value for the RoPE
+            max_seq_len (int): Maximum sequence length that will be input
+            device (torch.device | None): Device to store the parameters on
+            detype (torch.device | None): Data type of the parameters
+        """
+        factory_kwargs = {"device": device, "dtype": dtype}
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        
+        self.q_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.k_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.v_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.o_proj = Linear(d_model, d_model, **factory_kwargs)
+        
+        d_h = d_model // num_heads
+        self.pos_emb = RotaryPositionalEmbedding(theta, d_h, max_seq_len, device) if theta is not None else None
+
+    def forward(self,
+        x: torch.Tensor,
+        token_positions: torch.Tensor|None = None,
+    ) -> torch.Tensor:
+        q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+
+        # multi heads
+        q = rearrange(q, "... seq (h d) -> ... h seq d", h=self.num_heads)
+        k = rearrange(k, "... seq (h d) -> ... h seq d", h=self.num_heads)
+        v = rearrange(v, "... seq (h d) -> ... h seq d", h=self.num_heads)
+
+        # RoPE apply
+        if self.pos_emb is not None:
+            q = self.pos_emb(q, token_positions)
+            k = self.pos_emb(k, token_positions)
+
+        *_, h, seq, d = q.shape
+        mask = torch.triu(torch.ones(seq, seq), diagonal=1) == 0
+
+        attn_out = scaled_dot_product_attention(q, k, v, mask)
+
+        out = rearrange(attn_out, "... h seq d -> ... seq (h d)")
+        return self.o_proj(out)
